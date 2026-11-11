@@ -16,6 +16,9 @@ require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes); // Tất cả API đăng nhập/đăng ký sẽ bắt đầu bằng /api/auth
 
+const movieRoutes = require('./routes/movieRoutes');
+app.use('/api/movies', movieRoutes);
+
 app.get('/', (req, res) => {
     res.send('Kết nối thành công Backend!');
 });
