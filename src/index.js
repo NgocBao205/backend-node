@@ -19,6 +19,9 @@ app.use('/api/auth', authRoutes); // Tất cả API đăng nhập/đăng ký s�
 const movieRoutes = require('./routes/movieRoutes');
 app.use('/api/movies', movieRoutes);
 
+const showtimeRoutes = require('./routes/showtimeRoutes');
+app.use('/api/showtimes', showtimeRoutes);
+
 app.get('/', (req, res) => {
     res.send('Kết nối thành công Backend!');
 });
