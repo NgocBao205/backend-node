@@ -21,6 +21,7 @@ const showtimeRoutes = require('./routes/showtimeRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/movies', movieRoutes);
@@ -28,6 +29,7 @@ app.use('/api/showtimes', showtimeRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/chat', chatRoutes);
 
 app.get('/', (req, res) => {
     res.send('Kết nối thành công Backend!');
