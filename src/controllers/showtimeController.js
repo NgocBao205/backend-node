@@ -26,6 +26,10 @@ const showtimeController = {
             // 2. Vòng lặp rà soát và lưu từng suất chiếu
             for (const startTimeStr of start_times) {
                 const start_time = new Date(startTimeStr);
+
+                if (start_time < new Date()) {
+                    throw new Error(`Không thể xếp lịch trong quá khứ: ${start_time.toLocaleString('vi-VN')}`);
+                }
                 
                 // Thuật toán: Giờ kết thúc = Giờ bắt đầu + Thời lượng phim + 30 phút vệ sinh
                 const end_time = new Date(start_time.getTime() + (duration + 30) * 60000); 
