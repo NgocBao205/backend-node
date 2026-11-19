@@ -6,7 +6,7 @@ const authController = {
     // 1. API Đăng ký tài khoản
     register: async (req, res) => {
         try {
-            // Rút trích dữ liệu từ Frontend gửi lên
+            // Rút dữ liệu từ Frontend gửi lên
             const { full_name, email, password, phone } = req.body;
 
             // Kiểm tra xem email đã tồn tại trong CSDL chưa
@@ -15,11 +15,11 @@ const authController = {
                 return res.status(400).json({ message: "Email này đã được sử dụng!" });
             }
 
-            // Băm mật khẩu (Tạo ra một chuỗi loằng ngoằng không thể dịch ngược)
+            // Băm mật khẩu
             const salt = await bcrypt.genSalt(10);
             const password_hash = await bcrypt.hash(password, salt);
 
-            // Lưu người dùng mới vào DB (Mặc định role là Customer, status là Active)
+            // Lưu người dùng mới vào DB
             const newUser = await pool.query(
                 `INSERT INTO Users (full_name, email, password_hash, phone, role, status) 
                  VALUES ($1, $2, $3, $4, 'Customer', 'Active') RETURNING id, full_name, email, role`,

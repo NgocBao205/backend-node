@@ -48,19 +48,17 @@ const io = new Server(server, {
 
 // Lắng nghe các kết nối từ trình duyệt khách hàng
 io.on('connection', (socket) => {
-    console.log(`📡 Một khách hàng vừa kết nối Real-time (ID: ${socket.id})`);
+    console.log(`Một khách hàng vừa kết nối (ID: ${socket.id})`);
     
     // Khi khách hàng tắt trình duyệt
     socket.on('disconnect', () => {
-        console.log(`🔌 Khách hàng đã ngắt kết nối (ID: ${socket.id})`);
+        console.log(`Khách hàng đã ngắt kết nối (ID: ${socket.id})`);
     });
 });
 
-// TRUYỀN IO VÀO BIẾN GLOBAL ĐỂ CÁC CONTROLLER CÓ THỂ DÙNG ĐƯỢC ĐỂ PHÁT SÓNG
 app.set('socketio', io);
 
-// LƯU Ý SỰ THAY ĐỔI: Dùng server.listen thay vì app.listen
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-    console.log(`Server thời gian thực đang chạy tại http://localhost:${PORT}`);
+    console.log(`Server đang chạy tại http://localhost:${PORT}`);
 });

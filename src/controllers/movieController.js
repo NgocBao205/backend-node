@@ -2,6 +2,20 @@ const axios = require('axios');
 const pool = require('../config/db'); // Nhúng kết nối CSDL
 
 const movieController = {
+    // Thêm hàm này vào trong object movieController
+    getAllMovies: async (req, res) => {
+        try {
+            // Lấy tất cả phim đang chiếu hoặc sắp chiếu
+            const result = await pool.query(
+                "SELECT * FROM Movies WHERE status IN ('Đang chiếu', 'Sắp chiếu') ORDER BY id DESC"
+            );
+            res.status(200).json(result.rows);
+        } catch (error) {
+            console.error("Lỗi lấy danh sách phim:", error);
+            res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
+        }
+    },
+    
     fetchFromTMDB: async (req, res) => {
         // Lấy 1 kết nối riêng biệt để chạy Transaction
         const client = await pool.connect(); 

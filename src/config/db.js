@@ -5,7 +5,7 @@ require('dotenv').config(); // Tải các biến từ file .env
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // Bắt buộc phải có khi kết nối đến Cloud Database Subapase
+        rejectUnauthorized: false
     }
 });
 

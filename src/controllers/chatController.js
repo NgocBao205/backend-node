@@ -7,7 +7,6 @@ const chatController = {
             const { question } = req.body;
             if (!question) return res.status(400).json({ message: "Vui lòng nhập câu hỏi!" });
 
-            // 1. MÓC DỮ LIỆU TỪ CSDL ĐỂ LÀM "TÀI LIỆU" CHO AI ĐỌC
             // Chúng ta lấy danh sách phim đang chiếu và giá vé cơ bản
             const movieRes = await pool.query(`SELECT title, duration FROM Movies WHERE status = 'Sắp chiếu' OR status = 'Đang chiếu'`);
             
@@ -17,13 +16,11 @@ const chatController = {
             });
             context_data += "Giờ mở cửa rạp: 8h00 sáng đến 23h00 đêm.";
 
-            // 2. GỬI CÂU HỎI VÀ DỮ LIỆU SANG PYTHON
             const aiResponse = await axios.post('http://localhost:8000/api/ai/chat', {
                 question: question,
                 context_data: context_data
             });
 
-            // 3. TRẢ CÂU TRẢ LỜI CHO FRONTEND
             res.status(200).json({
                 message: "Thành công",
                 answer: aiResponse.data.answer
