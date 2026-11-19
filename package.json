@@ -1,24 +1,26 @@
 {
   "name": "backend-node",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Backend API Server for CINEVIE Movie Ticketing System",
+  "main": "src/index.js",
   "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["movie-booking", "express", "socket.io", "redis", "postgresql"],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "@upstash/redis": "^1.41.0",
-    "axios": "^1.21.1",
-    "bcrypt": "^6.0.0",
+    "@upstash/redis": "^1.36.3",
+    "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
-    "dotenv": "^18.0.10",
-    "express": "^5.3.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.23.1",
-    "socket.io": "^4.8.4"
+    "pg": "^8.19.0",
+    "socket.io": "^4.8.3"
   }
 }

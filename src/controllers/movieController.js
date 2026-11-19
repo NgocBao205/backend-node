@@ -1,23 +1,120 @@
 const axios = require('axios');
-const pool = require('../config/db'); // Nhúng kết nối CSDL
+const pool = require('../config/db');
 
 const movieController = {
-    // Thêm hàm này vào trong object movieController
+    // 1. Lấy danh sách phim (kèm tìm kiếm & lọc trạng thái)
     getAllMovies: async (req, res) => {
         try {
-            // Lấy tất cả phim đang chiếu hoặc sắp chiếu
-            const result = await pool.query(
-                "SELECT * FROM Movies WHERE status IN ('Đang chiếu', 'Sắp chiếu') ORDER BY id DESC"
-            );
+            const { search, status } = req.query;
+            let query = `
+                SELECT m.*, 
+                    COALESCE(json_agg(DISTINCT g.name) FILTER (WHERE g.name IS NOT NULL), '[]') as genres
+                FROM Movies m
+                LEFT JOIN Movie_Genres mg ON m.id = mg.movie_id
+                LEFT JOIN Genres g ON mg.genre_id = g.id
+            `;
+            const conditions = [];
+            const values = [];
+
+            if (status) {
+                values.push(status);
+                conditions.push(`m.status = $${values.length}`);
+            } else {
+                conditions.push(`m.status IN ('Đang chiếu', 'Sắp chiếu')`);
+            }
+
+            if (search) {
+                values.push(`%${search}%`);
+                conditions.push(`m.title ILIKE $${values.length}`);
+            }
+
+            if (conditions.length > 0) {
+                query += ` WHERE ${conditions.join(' AND ')}`;
+            }
+
+            query += ` GROUP BY m.id ORDER BY m.id DESC`;
+
+            const result = await pool.query(query, values);
             res.status(200).json(result.rows);
         } catch (error) {
             console.error("Lỗi lấy danh sách phim:", error);
             res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
         }
     },
+
+    // 2. Lấy chi tiết một bộ phim kèm thể loại và diễn viên
+    getMovieById: async (req, res) => {
+        try {
+            const { id } = req.params;
+            
+            // Lấy thông tin phim và thể loại
+            const movieRes = await pool.query(
+                `SELECT m.*, 
+                    COALESCE(json_agg(DISTINCT g.name) FILTER (WHERE g.name IS NOT NULL), '[]') as genres
+                 FROM Movies m
+                 LEFT JOIN Movie_Genres mg ON m.id = mg.movie_id
+                 LEFT JOIN Genres g ON mg.genre_id = g.id
+                 WHERE m.id = $1
+                 GROUP BY m.id`,
+                [id]
+            );
+
+            if (movieRes.rows.length === 0) {
+                return res.status(404).json({ message: "Không tìm thấy bộ phim này!" });
+            }
+
+            const movie = movieRes.rows[0];
+
+            // Lấy danh sách diễn viên
+            const actorsRes = await pool.query(
+                `SELECT a.id, a.name, a.avatar_url, ma.character_name
+                 FROM Movie_Actors ma
+                 JOIN Actors a ON ma.actor_id = a.id
+                 WHERE ma.movie_id = $1`,
+                [id]
+            );
+
+            movie.actors = actorsRes.rows;
+
+            res.status(200).json(movie);
+        } catch (error) {
+            console.error("Lỗi lấy chi tiết phim:", error);
+            res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
+        }
+    },
+
+    // 3. Cập nhật trạng thái phim (Đang chiếu / Sắp chiếu / Lưu trữ)
+    updateStatus: async (req, res) => {
+        try {
+            const { id } = req.params;
+            const { status } = req.body;
+
+            const validStatuses = ['Sắp chiếu', 'Đang chiếu', 'Lưu trữ'];
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({ message: "Trạng thái không hợp lệ! (Sắp chiếu, Đang chiếu, Lưu trữ)" });
+            }
+
+            const result = await pool.query(
+                'UPDATE Movies SET status = $1 WHERE id = $2 RETURNING *',
+                [status, id]
+            );
+
+            if (result.rows.length === 0) {
+                return res.status(404).json({ message: "Không tìm thấy phim để cập nhật" });
+            }
+
+            res.status(200).json({
+                message: "Cập nhật trạng thái phim thành công!",
+                movie: result.rows[0]
+            });
+        } catch (error) {
+            console.error("Lỗi cập nhật trạng thái phim:", error);
+            res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
+        }
+    },
     
+    // 4. Kéo phim từ TMDB API (Transaction an toàn)
     fetchFromTMDB: async (req, res) => {
-        // Lấy 1 kết nối riêng biệt để chạy Transaction
         const client = await pool.connect(); 
 
         try {
@@ -26,21 +123,17 @@ const movieController = {
 
             const apiKey = process.env.TMDB_API_KEY;
 
-            // 1. GỌI API TMDB
             const movieRes = await axios.get(`https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${apiKey}&language=vi-VN`);
             const creditRes = await axios.get(`https://api.themoviedb.org/3/movie/${tmdb_id}/credits?api_key=${apiKey}&language=vi-VN`);
             
             const movieData = movieRes.data;
-            const castData = creditRes.data.cast.slice(0, 5); // Chỉ lấy 5 diễn viên
+            const castData = creditRes.data.cast ? creditRes.data.cast.slice(0, 6) : [];
 
-            // 2. BẮT ĐẦU TRANSACTION CƠ SỞ DỮ LIỆU
             await client.query('BEGIN'); 
 
-            // BƯỚC 2.1: LƯU BẢNG MOVIES
-            // Kiểm tra phim đã tồn tại chưa
             const checkMovie = await client.query('SELECT id FROM Movies WHERE tmdb_id = $1', [movieData.id]);
             if (checkMovie.rows.length > 0) {
-                throw new Error("Phim này đã được thêm vào hệ thống từ trước!"); // Ném lỗi để kích hoạt ROLLBACK
+                throw new Error("Phim này đã được thêm vào hệ thống từ trước!");
             }
 
             const insertMovie = await client.query(
@@ -49,31 +142,29 @@ const movieController = {
                 [
                     movieData.id,
                     movieData.title,
-                    `https://image.tmdb.org/t/p/w500${movieData.poster_path}`,
-                    movieData.overview,
-                    movieData.runtime || 120 // Nếu phim chưa có thời lượng, mặc định 120p
+                    movieData.poster_path ? `https://image.tmdb.org/t/p/w500${movieData.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Poster',
+                    movieData.overview || 'Chưa có tóm tắt nội dung.',
+                    movieData.runtime || 120
                 ]
             );
             const newMovieId = insertMovie.rows[0].id;
 
-            // BƯỚC 2.2: LƯU BẢNG GENRES VÀ MOVIE_GENRES
-            for (const genre of movieData.genres) {
-                let genreId;
-                // Tìm xem thể loại (VD: Hành động) đã có trong DB chưa
-                const checkGenre = await client.query('SELECT id FROM Genres WHERE name = $1', [genre.name]);
-                
-                if (checkGenre.rows.length > 0) {
-                    genreId = checkGenre.rows[0].id; // Có rồi thì lấy id cũ
-                } else {
-                    const insertGenre = await client.query('INSERT INTO Genres (name) VALUES ($1) RETURNING id', [genre.name]);
-                    genreId = insertGenre.rows[0].id; // Chưa có thì tạo mới và lấy id
+            if (movieData.genres) {
+                for (const genre of movieData.genres) {
+                    let genreId;
+                    const checkGenre = await client.query('SELECT id FROM Genres WHERE name = $1', [genre.name]);
+                    
+                    if (checkGenre.rows.length > 0) {
+                        genreId = checkGenre.rows[0].id;
+                    } else {
+                        const insertGenre = await client.query('INSERT INTO Genres (name) VALUES ($1) RETURNING id', [genre.name]);
+                        genreId = insertGenre.rows[0].id;
+                    }
+                    
+                    await client.query('INSERT INTO Movie_Genres (movie_id, genre_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [newMovieId, genreId]);
                 }
-                
-                // Móc nối Phim và Thể loại vào bảng trung gian N-N
-                await client.query('INSERT INTO Movie_Genres (movie_id, genre_id) VALUES ($1, $2)', [newMovieId, genreId]);
             }
 
-            // BƯỚC 2.3: LƯU BẢNG ACTORS VÀ MOVIE_ACTORS
             for (const actor of castData) {
                 let actorId;
                 const checkActor = await client.query('SELECT id FROM Actors WHERE name = $1', [actor.name]);
@@ -86,14 +177,12 @@ const movieController = {
                     actorId = insertActor.rows[0].id;
                 }
                 
-                // Móc nối Phim và Diễn viên vào bảng trung gian
                 await client.query(
-                    'INSERT INTO Movie_Actors (movie_id, actor_id, character_name) VALUES ($1, $2, $3)', 
-                    [newMovieId, actorId, actor.character]
+                    'INSERT INTO Movie_Actors (movie_id, actor_id, character_name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', 
+                    [newMovieId, actorId, actor.character || '']
                 );
             }
 
-            // 3. CHỐT GIAO DỊCH VÀ LƯU VĨNH VIỄN
             await client.query('COMMIT'); 
 
             res.status(201).json({
@@ -102,12 +191,10 @@ const movieController = {
             });
 
         } catch (error) {
-            // CÓ BẤT KỲ LỖI NÀO (Kể cả lỗi do ném ra ở trên) -> HỦY TOÀN BỘ
             await client.query('ROLLBACK');
             console.error("Lỗi:", error.message);
             res.status(400).json({ message: error.message || "Lỗi máy chủ khi lưu phim" });
         } finally {
-            // LUÔN LUÔN trả kết nối lại cho hồ bơi (Dù thành công hay thất bại)
             client.release();
         }
     }

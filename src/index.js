@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 
-// Import 2 module của Node.js để chạy Socket.IO
 const http = require('http');
 const { Server } = require('socket.io');
 
@@ -12,7 +11,7 @@ app.use(express.json());
 
 // Khởi động các cơ sở dữ liệu
 require('./config/db');
-require('./config/redis'); // Gọi Redis
+require('./config/redis');
 
 // Khai báo các Router
 const authRoutes = require('./routes/authRoutes');
@@ -22,6 +21,8 @@ const ticketRoutes = require('./routes/ticketRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const roomRoutes = require('./routes/roomRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/movies', movieRoutes);
@@ -30,29 +31,47 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/rooms', roomRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.get('/', (req, res) => {
-    res.send('Kết nối thành công Backend!');
+    res.send('Kết nối thành công Backend CINEVIE API Full Stack!');
 });
 
 // Bọc Express app bằng HTTP Server
 const server = http.createServer(app);
 
-// Khởi tạo máy chủ Socket.IO, cấu hình CORS cho phép Vue.js truy cập
+// Khởi tạo máy chủ Socket.IO
 const io = new Server(server, {
     cors: {
-        origin: "*", // Tạm thời cho phép mọi nguồn, khi đưa lên mạng sẽ giới hạn lại
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
 
-// Lắng nghe các kết nối từ trình duyệt khách hàng
+// Lắng nghe các kết nối từ client
 io.on('connection', (socket) => {
-    console.log(`Một khách hàng vừa kết nối (ID: ${socket.id})`);
-    
-    // Khi khách hàng tắt trình duyệt
+    console.log(`[Socket.IO] Client kết nối: ${socket.id}`);
+
+    // Join room theo showtime
+    socket.on('join_showtime', (showtimeId) => {
+        socket.join(`showtime_${showtimeId}`);
+        console.log(`[Socket.IO] Client ${socket.id} join showtime_${showtimeId}`);
+    });
+
+    // Client gửi yêu cầu lock ghế
+    socket.on('lockSeat', (seatId) => {
+        socket.broadcast.emit('seat_locked', { seat_id: seatId });
+        socket.broadcast.emit('seatLocked', seatId);
+    });
+
+    // Client nhả ghế
+    socket.on('unlockSeat', (seatId) => {
+        socket.broadcast.emit('seat_unlocked', { seat_id: seatId });
+    });
+
     socket.on('disconnect', () => {
-        console.log(`Khách hàng đã ngắt kết nối (ID: ${socket.id})`);
+        console.log(`[Socket.IO] Client ngắt kết nối: ${socket.id}`);
     });
 });
 
@@ -60,5 +79,5 @@ app.set('socketio', io);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
-    console.log(`Server đang chạy tại http://localhost:${PORT}`);
+    console.log(`Backend CINEVIE đang chạy tại http://localhost:${PORT}`);
 });
