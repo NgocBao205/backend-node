@@ -3,7 +3,7 @@ const router = express.Router();
 const movieController = require('../controllers/movieController');
 const authMiddleware = require('../middlewares/authMiddleware');
 
-// 1. Lấy danh sách phim (kèm search & filter)
+// 1. Lấy danh sách phim (kèm search & filter & avg_rating)
 router.get('/', movieController.getAllMovies);
 
 // 2. Lấy chi tiết một bộ phim
@@ -11,8 +11,15 @@ router.get('/:id', movieController.getMovieById);
 
 // 3. Import phim từ TMDB (Chỉ Quản trị viên)
 router.post('/fetch-tmdb', authMiddleware.verifyAdmin, movieController.fetchFromTMDB);
+router.post('/import', authMiddleware.verifyAdmin, movieController.fetchFromTMDB);
 
 // 4. Cập nhật trạng thái phim (Chỉ Quản trị viên)
 router.patch('/:id/status', authMiddleware.verifyAdmin, movieController.updateStatus);
+
+// 5. Cập nhật thông tin chi tiết phim (Chỉ Quản trị viên)
+router.put('/:id', authMiddleware.verifyAdmin, movieController.updateMovie);
+
+// 6. Xóa phim (Chỉ Quản trị viên, chặn xóa nếu đã có suất chiếu)
+router.delete('/:id', authMiddleware.verifyAdmin, movieController.deleteMovie);
 
 module.exports = router;
