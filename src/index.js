@@ -13,6 +13,11 @@ app.use(express.json());
 require('./config/db');
 require('./config/redis');
 
+// Tự động quét và đồng bộ trạng thái Phim & Suất chiếu định kỳ mỗi 60 giây ở background
+const { syncNow } = require('./middlewares/autoSyncMiddleware');
+syncNow();
+setInterval(syncNow, 60000);
+
 // Khai báo các Router
 const authRoutes = require('./routes/authRoutes');
 const movieRoutes = require('./routes/movieRoutes');
