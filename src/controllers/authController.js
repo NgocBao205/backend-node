@@ -1,25 +1,26 @@
 const pool = require('../config/db');
 const redis = require('../config/redis');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { sendMail } = require('../config/mailer');
+const { OAuth2Client } = require('google-auth-library');
+
+const googleClient = new OAuth2Client('223381933983-msnabh38kh3tj01fpdq7c7vn890id9om.apps.googleusercontent.com');
 
 const authController = {
-    // 1. API Đăng ký tài khoản (Bắt buộc phone & date_of_birth; kiểm tra kỹ lưỡng các trường)
+    // 1. API Đăng ký tài khoản
     register: async (req, res) => {
         try {
             const { full_name, email, password, phone, date_of_birth, fax_number } = req.body;
 
-            // Honeypot Bot Trap: Nếu có bot tự động điền trường ẩn fax_number thì lập tức từ chối âm thầm
             if (fax_number) {
                 return res.status(400).json({ message: "Yêu cầu không hợp lệ!" });
             }
 
-            // 1. Họ và tên
             if (!full_name || !full_name.trim() || full_name.trim().length < 2) {
                 return res.status(400).json({ message: "Vui lòng nhập họ và tên hợp lệ (tối thiểu 2 ký tự)!" });
             }
 
-            // 2. Email: định dạng chuẩn RFC và kiểm tra trùng
             if (!email || !email.trim()) {
                 return res.status(400).json({ message: "Vui lòng nhập địa chỉ email!" });
             }
@@ -34,7 +35,6 @@ const authController = {
                 return res.status(400).json({ message: "Email này đã được sử dụng bởi một tài khoản khác!" });
             }
 
-            // 3. Số điện thoại (Bắt buộc): Chuẩn 10 số đầu 0 (Việt Nam) và kiểm tra trùng
             if (!phone || !phone.trim()) {
                 return res.status(400).json({ message: "Vui lòng nhập số điện thoại liên hệ (bắt buộc)!" });
             }
@@ -49,7 +49,6 @@ const authController = {
                 return res.status(400).json({ message: "Số điện thoại này đã được sử dụng bởi một tài khoản khác!" });
             }
 
-            // 4. Ngày sinh (Bắt buộc): Kiểm tra giới hạn tuổi hợp lý (Từ 6 tuổi đến 120 tuổi)
             if (!date_of_birth) {
                 return res.status(400).json({ message: "Vui lòng chọn ngày sinh (bắt buộc)!" });
             }
@@ -73,7 +72,6 @@ const authController = {
                 return res.status(400).json({ message: "Ngày sinh không hợp lệ (vượt quá giới hạn cho phép)!" });
             }
 
-            // 5. Mật khẩu: Tối thiểu 8 ký tự, bao gồm ít nhất 1 ký tự đặc biệt
             if (!password || password.length < 8) {
                 return res.status(400).json({ message: "Mật khẩu phải chứa ít nhất 8 ký tự!" });
             }
@@ -82,22 +80,14 @@ const authController = {
                 return res.status(400).json({ message: "Mật khẩu phải chứa ít nhất 1 ký tự đặc biệt (Ví dụ: @, #, $, %,...)!" });
             }
 
-            // Băm mật khẩu
             const salt = await bcrypt.genSalt(10);
             const password_hash = await bcrypt.hash(password, salt);
 
-            // Lưu người dùng mới vào CSDL
             const newUser = await pool.query(
                 `INSERT INTO Users (full_name, email, password_hash, phone, date_of_birth, avatar_url, loyalty_points, role, status) 
                  VALUES ($1, $2, $3, $4, $5, NULL, 0, 'Customer', 'Active') 
                  RETURNING id, full_name, email, phone, date_of_birth, loyalty_points, role`,
-                [
-                    full_name.trim(), 
-                    cleanEmail, 
-                    password_hash, 
-                    cleanPhone, 
-                    date_of_birth
-                ]
+                [full_name.trim(), cleanEmail, password_hash, cleanPhone, date_of_birth]
             );
 
             res.status(201).json({ 
@@ -110,12 +100,11 @@ const authController = {
         }
     },
 
-    // 2. API Đăng nhập (hỗ trợ phân vùng đăng nhập portal: 'client' hoặc 'admin')
+    // 2. API Đăng nhập
     login: async (req, res) => {
         try {
             const { email, password, portal = 'client', fax_number } = req.body;
 
-            // Honeypot Bot Trap:
             if (fax_number) {
                 return res.status(400).json({ message: "Yêu cầu không hợp lệ!" });
             }
@@ -141,28 +130,21 @@ const authController = {
                 return res.status(400).json({ message: "Mật khẩu không chính xác!" });
             }
 
-            // --- PHÂN VÙNG ĐĂNG NHẬP CHẶT CHẼ ---
-            if (portal === 'client') {
-                if (currentUser.role === 'Admin') {
-                    return res.status(403).json({
-                        role: 'Admin',
-                        message: "Đây là tài khoản Quản Trị Viên! Vui lòng truy cập Cổng Quản Trị Nội Bộ (/portal-qtv-99x) để đăng nhập."
-                    });
-                }
+            if (portal === 'client' && currentUser.role === 'Admin') {
+                return res.status(403).json({
+                    role: 'Admin',
+                    message: "Đây là tài khoản Quản Trị Viên! Vui lòng truy cập Cổng Quản Trị Nội Bộ (/portal-qtv-99x) để đăng nhập."
+                });
             }
 
-            if (portal === 'admin') {
-                if (currentUser.role !== 'Admin') {
-                    return res.status(403).json({
-                        message: "Truy cập bị từ chối: Cổng này chỉ dành riêng cho tài khoản Quản Trị Viên (Admin)!"
-                    });
-                }
+            if (portal === 'admin' && currentUser.role !== 'Admin') {
+                return res.status(403).json({
+                    message: "Truy cập bị từ chối: Cổng này chỉ dành riêng cho tài khoản Quản Trị Viên (Admin)!"
+                });
             }
 
-            // Cập nhật mốc thời gian last_login
             await pool.query('UPDATE Users SET last_login = CURRENT_TIMESTAMP WHERE id = $1', [currentUser.id]);
 
-            // Tạo Token JWT 1 ngày
             const token = jwt.sign(
                 { id: currentUser.id, role: currentUser.role }, 
                 process.env.JWT_SECRET, 
@@ -189,7 +171,7 @@ const authController = {
         }
     },
 
-    // 3. API Quên mật khẩu: Gửi mã OTP xác nhận
+    // 3. API Quên mật khẩu: Gửi mã OTP THẬT qua Gmail bằng Nodemailer
     forgotPassword: async (req, res) => {
         try {
             const { email } = req.body;
@@ -202,36 +184,57 @@ const authController = {
                 return res.status(404).json({ message: "Không tìm thấy tài khoản gắn với email này!" });
             }
 
-            // Sinh mã OTP 6 số
+            const userName = userRes.rows[0].full_name;
             const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-            // Lưu vào Upstash Redis hoặc in-memory với thời gian 5 phút (300 giây)
             try {
                 if (redis && redis.set) {
                     await redis.set(`reset_otp:${cleanEmail}`, otpCode, { ex: 300 });
                 }
             } catch (redisErr) {
-                console.warn("Lưu OTP vào Redis thất bại, fallback console:", redisErr.message);
+                console.warn("Lưu OTP Redis lỗi:", redisErr.message);
             }
 
-            // Log OTP ra console terminal cho môi trường dev/local để kiểm tra ngay
-            console.log(`\n======================================================`);
-            console.log(`[CINEVIE RESET PASSWORD OTP]`);
-            console.log(`Email: ${cleanEmail}`);
-            console.log(`Mã xác thực OTP (Hiệu lực 5 phút): ${otpCode}`);
-            console.log(`======================================================\n`);
+            // Gửi email thật tới hòm thư người dùng
+            const mailHtml = `
+                <div style="font-family: Arial, sans-serif; max-width: 550px; margin: 0 auto; background-color: #0b0f19; color: #f3f4f6; padding: 30px; border-radius: 16px; border: 1px solid #1f2937;">
+                    <div style="text-align: center; margin-bottom: 25px;">
+                        <h2 style="color: #e11d48; margin: 0; font-size: 26px; font-weight: 900; letter-spacing: 2px;">CINE<span style="color: #f59e0b;">VIE</span></h2>
+                        <p style="color: #9ca3af; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;">Cinema Experience</p>
+                    </div>
+                    <div style="background-color: #111827; padding: 25px; border-radius: 12px; border: 1px solid #374151;">
+                        <h3 style="color: #ffffff; margin-top: 0;">Chào bạn ${userName},</h3>
+                        <p style="color: #d1d5db; font-size: 14px; line-height: 1.6;">Bạn vừa gửi yêu cầu khôi phục mật khẩu tài khoản CINEVIE. Dưới đây là mã xác thực OTP của bạn:</p>
+                        <div style="text-align: center; margin: 25px 0;">
+                            <span style="display: inline-block; font-size: 32px; font-weight: 900; letter-spacing: 8px; color: #f59e0b; background-color: #030712; padding: 12px 28px; border-radius: 10px; border: 1px dashed #f59e0b;">${otpCode}</span>
+                        </div>
+                        <p style="color: #ef4444; font-size: 13px; margin-bottom: 0;">* Mã OTP có hiệu lực trong vòng <b>5 phút</b>. Tuyệt đối không chia sẻ mã này cho bất kỳ ai để bảo vệ tài khoản.</p>
+                    </div>
+                    <div style="text-align: center; margin-top: 25px; font-size: 11px; color: #6b7280;">
+                        <p>© 2026 CINEVIE Cinema. Hệ thống đặt vé xem phim trực tuyến hiện đại.</p>
+                    </div>
+                </div>
+            `;
+
+            const emailResult = await sendMail({
+                to: cleanEmail,
+                subject: `[CINEVIE] Mã xác thực OTP đặt lại mật khẩu: ${otpCode}`,
+                html: mailHtml
+            });
+
+            console.log(`[CINEVIE OTP GMAIL] Đã gửi OTP ${otpCode} tới ${cleanEmail}`);
 
             res.status(200).json({
-                message: "Mã xác thực OTP đã được gửi thành công! (Vui lòng kiểm tra email hoặc terminal máy chủ)",
-                otp_dev_preview: otpCode // Trả về kèm cho môi trường đồ án tiện test
+                message: `Mã OTP đã được gửi thành công vào hộp thư Gmail của bạn (${cleanEmail})! Vui lòng kiểm tra hộp thư đến hoặc thư rác.`,
+                email_sent: emailResult.success
             });
         } catch (error) {
-            console.error("Lỗi yêu cầu OTP quên mật khẩu:", error);
-            res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
+            console.error("Lỗi gửi OTP quên mật khẩu:", error);
+            res.status(500).json({ message: "Lỗi máy chủ khi gửi email OTP" });
         }
     },
 
-    // 4. API Đặt lại mật khẩu mới (Xác thực qua OTP)
+    // 4. API Đặt lại mật khẩu mới
     resetPassword: async (req, res) => {
         try {
             const { email, otp, new_password } = req.body;
@@ -242,22 +245,17 @@ const authController = {
 
             const cleanEmail = email.trim().toLowerCase();
 
-            // Lấy OTP từ Redis hoặc kiểm tra
             let storedOtp = null;
             try {
                 if (redis && redis.get) {
                     storedOtp = await redis.get(`reset_otp:${cleanEmail}`);
                 }
-            } catch (redisErr) {
-                console.warn("Lấy OTP từ Redis lỗi:", redisErr.message);
-            }
+            } catch (redisErr) {}
 
-            // Kiểm tra mã OTP
             if (storedOtp && storedOtp.toString() !== otp.toString().trim()) {
                 return res.status(400).json({ message: "Mã OTP không chính xác hoặc đã hết hạn!" });
             }
 
-            // Kiểm tra chuẩn mật khẩu mới
             if (new_password.length < 8) {
                 return res.status(400).json({ message: "Mật khẩu mới phải chứa ít nhất 8 ký tự!" });
             }
@@ -271,7 +269,6 @@ const authController = {
 
             await pool.query('UPDATE Users SET password_hash = $1 WHERE email = $2', [password_hash, cleanEmail]);
 
-            // Xóa OTP sau khi đổi thành công
             try {
                 if (redis && redis.del) {
                     await redis.del(`reset_otp:${cleanEmail}`);
@@ -287,13 +284,26 @@ const authController = {
         }
     },
 
-    // 5. API Đăng nhập / Đăng ký nhanh qua Google OAuth
+    // 5. API Đăng nhập / Đăng ký THẬT qua Google OAuth Credential
     googleAuth: async (req, res) => {
         try {
-            const { email, full_name, avatar_url, google_id } = req.body;
+            const { credential } = req.body;
+
+            if (!credential) {
+                return res.status(400).json({ message: "Thiếu token xác thực từ Google!" });
+            }
+
+            // Verify Google ID Token thật 100% với Google Server
+            const ticket = await googleClient.verifyIdToken({
+                idToken: credential,
+                audience: '223381933983-msnabh38kh3tj01fpdq7c7vn890id9om.apps.googleusercontent.com'
+            });
+
+            const payload = ticket.getPayload();
+            const { email, name, picture, sub } = payload;
 
             if (!email) {
-                return res.status(400).json({ message: "Dữ liệu xác thực Google không có email!" });
+                return res.status(400).json({ message: "Không tìm thấy email trong tài khoản Google này!" });
             }
 
             const cleanEmail = email.trim().toLowerCase();
@@ -301,8 +311,7 @@ const authController = {
 
             let user;
             if (userQuery.rows.length === 0) {
-                // Tạo tài khoản mới tự động từ Google Profile
-                const randomPass = Math.random().toString(36).slice(-10) + '!@#';
+                const randomPass = Math.random().toString(36).slice(-10) + '!@#Cinevie';
                 const salt = await bcrypt.genSalt(10);
                 const password_hash = await bcrypt.hash(randomPass, salt);
 
@@ -310,18 +319,17 @@ const authController = {
                     `INSERT INTO Users (full_name, email, password_hash, avatar_url, role, status)
                      VALUES ($1, $2, $3, $4, 'Customer', 'Active')
                      RETURNING id, full_name, email, phone, date_of_birth, avatar_url, loyalty_points, role`,
-                    [full_name || 'Khách hàng Google', cleanEmail, password_hash, avatar_url || null]
+                    [name || 'Thành viên Google', cleanEmail, password_hash, picture || null]
                 );
                 user = insertRes.rows[0];
             } else {
                 user = userQuery.rows[0];
                 if (user.status === 'Banned') {
-                    return res.status(403).json({ message: "Tài khoản của bạn đã bị khóa!" });
+                    return res.status(403).json({ message: "Tài khoản của bạn đã bị khóa bởi Quản trị viên!" });
                 }
-                // Cập nhật avatar nếu trước đó chưa có
-                if (!user.avatar_url && avatar_url) {
-                    await pool.query('UPDATE Users SET avatar_url = $1 WHERE id = $2', [avatar_url, user.id]);
-                    user.avatar_url = avatar_url;
+                if (!user.avatar_url && picture) {
+                    await pool.query('UPDATE Users SET avatar_url = $1 WHERE id = $2', [picture, user.id]);
+                    user.avatar_url = picture;
                 }
             }
 
@@ -334,7 +342,7 @@ const authController = {
             );
 
             res.status(200).json({
-                message: "Đăng nhập Google thành công!",
+                message: `Chào mừng ${user.full_name} đã đăng nhập thành công qua Google!`,
                 token,
                 user: {
                     id: user.id,
@@ -348,8 +356,59 @@ const authController = {
                 }
             });
         } catch (error) {
-            console.error("Lỗi Google Auth:", error);
-            res.status(500).json({ message: "Lỗi máy chủ khi xác thực Google" });
+            console.error("Lỗi Google Auth Token Verify:", error.message);
+            res.status(400).json({ message: `Xác thực Google thất bại: ${error.message}` });
+        }
+    },
+
+    // 6. Gửi form Liên hệ khách hàng tới Gmail cinemavnam@gmail.com
+    sendContactMail: async (req, res) => {
+        try {
+            const { name, email, topic, message } = req.body;
+            if (!name || !email || !message) {
+                return res.status(400).json({ message: "Vui lòng điền đầy đủ Họ tên, Email và Nội dung phản hồi!" });
+            }
+
+            const receiverEmail = process.env.EMAIL_USER ? process.env.EMAIL_USER.replace(/"/g, '') : 'cinemavnam@gmail.com';
+            const mailHtml = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #0b0f19; color: #f3f4f6; padding: 30px; border-radius: 16px; border: 1px solid #1f2937;">
+                    <div style="border-bottom: 2px solid #e11d48; padding-bottom: 15px; margin-bottom: 20px;">
+                        <h2 style="color: #f59e0b; margin: 0; font-size: 20px;">[CINEVIE] Thư Liên Hệ Mới Từ Khách Hàng</h2>
+                        <span style="font-size: 12px; color: #9ca3af;">Gửi vào: ${new Date().toLocaleString('vi-VN')}</span>
+                    </div>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <tr>
+                            <td style="padding: 8px 0; color: #9ca3af; width: 140px;"><b>Khách hàng:</b></td>
+                            <td style="padding: 8px 0; color: #ffffff;">${name}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 0; color: #9ca3af;"><b>Email gửi:</b></td>
+                            <td style="padding: 8px 0; color: #f59e0b;">${email}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 0; color: #9ca3af;"><b>Chủ đề:</b></td>
+                            <td style="padding: 8px 0; color: #e11d48; font-weight: bold;">${topic || 'Góp ý chung'}</td>
+                        </tr>
+                    </table>
+                    <div style="background-color: #111827; padding: 20px; border-radius: 10px; margin-top: 20px; border: 1px solid #374151;">
+                        <b style="color: #d1d5db; font-size: 13px; display: block; margin-bottom: 10px;">Nội dung tin nhắn:</b>
+                        <p style="color: #ffffff; font-size: 14px; line-height: 1.6; margin: 0; white-space: pre-line;">${message}</p>
+                    </div>
+                </div>
+            `;
+
+            await sendMail({
+                to: receiverEmail,
+                subject: `[CINEVIE Phản Hồi] ${topic || 'Liên Hệ Từ Khách Hàng'} - ${name}`,
+                html: mailHtml
+            });
+
+            res.status(200).json({
+                message: "Tin nhắn phản hồi của bạn đã được gửi trực tiếp đến hòm thư Ban Quản Trị CINEVIE!"
+            });
+        } catch (error) {
+            console.error("Lỗi gửi email liên hệ:", error);
+            res.status(500).json({ message: "Lỗi máy chủ khi gửi email liên hệ" });
         }
     }
 };

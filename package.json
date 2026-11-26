@@ -8,7 +8,13 @@
     "dev": "node --watch src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["movie-booking", "express", "socket.io", "redis", "postgresql"],
+  "keywords": [
+    "movie-booking",
+    "express",
+    "socket.io",
+    "redis",
+    "postgresql"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -18,8 +24,10 @@
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "google-auth-library": "^11.3.4",
     "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^10.6.1",
     "pg": "^8.19.0",
     "socket.io": "^4.8.3"
   }

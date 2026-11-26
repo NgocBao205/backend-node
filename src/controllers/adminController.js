@@ -30,7 +30,7 @@ const adminController = {
                     SELECT CURRENT_DATE - i AS day
                     FROM generate_series(6, 0, -1) AS i
                 ) days
-                LEFT JOIN Tickets t ON DATE(t.id::text) = days.day AND t.status IN ('Đã thanh toán', 'Đã xác nhận vào rạp')
+                LEFT JOIN Tickets t ON DATE(t.created_at) = days.day AND t.status IN ('Đã thanh toán', 'Đã xác nhận vào rạp')
                 GROUP BY days.day
                 ORDER BY days.day ASC
             `);

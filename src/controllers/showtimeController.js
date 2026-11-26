@@ -119,6 +119,16 @@ const showtimeController = {
 
             const showtime = showtimeRes.rows[0];
 
+            // Lấy toàn bộ danh sách ghế thực tế trong phòng chiếu từ bảng seats
+            const seatsRes = await pool.query(
+                `SELECT id, row_letter, seat_number, type 
+                 FROM Seats 
+                 WHERE room_id = $1 
+                 ORDER BY row_letter ASC, seat_number ASC`,
+                [showtime.room_id]
+            );
+            showtime.seats = seatsRes.rows;
+
             const bookedSeatsRes = await pool.query(
                 `SELECT seat_id FROM Tickets 
                  WHERE showtime_id = $1 AND status IN ('Đã thanh toán', 'Đã xác nhận vào rạp')`,

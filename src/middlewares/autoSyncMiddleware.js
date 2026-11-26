@@ -70,22 +70,23 @@ const autoSyncStatus = async (req, res, next) => {
  */
 const syncNow = async () => {
     try {
+        const queryFunc = pool.queryWithRetry || pool.query.bind(pool);
         await Promise.all([
-            pool.query(`
+            queryFunc(`
                 UPDATE Movies 
                 SET status = 'Đang chiếu' 
                 WHERE status = 'Sắp chiếu' 
                   AND release_date IS NOT NULL 
                   AND release_date <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
             `),
-            pool.query(`
+            queryFunc(`
                 UPDATE Showtimes 
                 SET status = 'Đang chiếu' 
                 WHERE status = 'Sắp chiếu' 
                   AND start_time <= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::timestamp
                   AND end_time > (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Ho_Chi_Minh')::timestamp
             `),
-            pool.query(`
+            queryFunc(`
                 UPDATE Showtimes 
                 SET status = 'Đã chiếu' 
                 WHERE status IN ('Sắp chiếu', 'Đang chiếu') 
@@ -93,7 +94,9 @@ const syncNow = async () => {
             `)
         ]);
     } catch (err) {
-        console.error("Lỗi syncNow:", err.message);
+        if (!err.message?.includes('ECONNRESET')) {
+            console.error("Lỗi syncNow:", err.message);
+        }
     }
 };
 

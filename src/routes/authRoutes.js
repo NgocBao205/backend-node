@@ -7,12 +7,15 @@ const authMiddleware = require('../middlewares/authMiddleware');
 router.post('/register', authController.register);
 router.post('/login', authController.login);
 
-// Quên mật khẩu & Đặt lại mật khẩu qua OTP
+// Quên mật khẩu & Đặt lại mật khẩu qua OTP thật bằng Gmail
 router.post('/forgot-password', authController.forgotPassword);
 router.post('/reset-password', authController.resetPassword);
 
-// Đăng nhập / Đăng ký nhanh qua Google OAuth
+// Đăng nhập / Đăng ký thật qua Google OAuth Token
 router.post('/google', authController.googleAuth);
+
+// Gửi form Liên hệ tới email cinemavnam@gmail.com
+router.post('/contact', authController.sendContactMail);
 
 router.get('/profile', authMiddleware.verifyToken, (req, res) => {
     res.status(200).json({

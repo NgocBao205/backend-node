@@ -2,46 +2,65 @@ const pool = require('../config/db');
 const redis = require('../config/redis');
 
 const ticketController = {
-    // 1. Giữ ghế tạm thời (Redis Lock NX TTL 300s)
+    // 1. Giữ 1 hoặc nhiều ghế tạm thời (Redis Lock NX TTL 300s)
     lockSeat: async (req, res) => {
         try {
-            const { seat_id, showtime_id } = req.body;
+            const { seat_id, seat_ids, showtime_id } = req.body;
             const user_id = req.user.id;
 
-            if (!seat_id || !showtime_id) {
-                return res.status(400).json({ message: "Thiếu seat_id hoặc showtime_id" });
+            // Hỗ trợ cả 1 ghế (seat_id) hoặc mảng nhiều ghế (seat_ids)
+            const seatsToLock = Array.isArray(seat_ids) && seat_ids.length > 0 
+                ? seat_ids 
+                : (seat_id ? [seat_id] : []);
+
+            if (seatsToLock.length === 0 || !showtime_id) {
+                return res.status(400).json({ message: "Thiếu thông tin ghế hoặc showtime_id" });
             }
 
-            // Kiểm tra ghế đã bán trong CSDL chưa
+            // Kiểm tra các ghế đã bán trong CSDL chưa
             const checkSold = await pool.query(
-                `SELECT id FROM Tickets 
-                 WHERE showtime_id = $1 AND seat_id = $2 AND status IN ('Đã thanh toán', 'Đã xác nhận vào rạp')`,
-                [showtime_id, seat_id]
+                `SELECT seat_id FROM Tickets 
+                 WHERE showtime_id = $1 AND seat_id = ANY($2) AND status IN ('Đã thanh toán', 'Đã xác nhận vào rạp')`,
+                [showtime_id, seatsToLock]
             );
 
             if (checkSold.rows.length > 0) {
-                return res.status(409).json({ message: "Ghế này đã được bán vĩnh viễn!" });
+                const soldSeats = checkSold.rows.map(r => r.seat_id).join(', ');
+                return res.status(409).json({ message: `Ghế [${soldSeats}] đã có người mua từ trước!` });
             }
 
-            const lockKey = `lock:showtime_${showtime_id}:seat_${seat_id}`;
-            const isLocked = await redis.set(lockKey, user_id, { nx: true, ex: 300 });
+            // Kiểm tra Redis lock của từng ghế
+            const lockedSeats = [];
+            for (const sId of seatsToLock) {
+                const lockKey = `lock:showtime_${showtime_id}:seat_${sId}`;
+                const isLocked = await redis.set(lockKey, user_id, { nx: true, ex: 300 });
+                if (isLocked) {
+                    lockedSeats.push(sId);
+                }
+            }
 
-            if (!isLocked) {
+            if (lockedSeats.length < seatsToLock.length) {
+                // Nhả lại các ghế vừa khóa nếu không khóa được trọn bộ
+                for (const sId of lockedSeats) {
+                    await redis.del(`lock:showtime_${showtime_id}:seat_${sId}`);
+                }
                 return res.status(409).json({ 
-                    message: "Rất tiếc! Ghế này vừa có người giữ rồi. Vui lòng chọn ghế khác." 
+                    message: "Một trong các ghế bạn chọn vừa có người khác giữ. Vui lòng chọn ghế khác!" 
                 });
             }
 
             // Phát sóng thời gian thực cho tất cả client
             const io = req.app.get('socketio');
             if (io) {
-                io.emit('seat_locked', { showtime_id, seat_id, status: 'locked' });
-                io.emit('seatLocked', seat_id);
+                for (const sId of lockedSeats) {
+                    io.emit('seat_locked', { showtime_id, seat_id: sId, status: 'locked' });
+                    io.emit('seatLocked', sId);
+                }
             }
 
             res.status(200).json({
                 message: "Giữ ghế thành công! Bạn có 5 phút để thanh toán.",
-                seat_id: seat_id,
+                seat_ids: lockedSeats,
                 expire_in: "5 phút"
             });
 
@@ -54,23 +73,27 @@ const ticketController = {
     // 2. Nhả ghế (Unlock Seat)
     unlockSeat: async (req, res) => {
         try {
-            const { seat_id, showtime_id } = req.body;
+            const { seat_id, seat_ids, showtime_id } = req.body;
             const user_id = req.user.id;
 
-            const lockKey = `lock:showtime_${showtime_id}:seat_${seat_id}`;
-            const currentOwner = await redis.get(lockKey);
+            const seatsToUnlock = Array.isArray(seat_ids) && seat_ids.length > 0 
+                ? seat_ids 
+                : (seat_id ? [seat_id] : []);
 
-            if (currentOwner && currentOwner.toString() === user_id.toString()) {
-                await redis.del(lockKey);
+            const io = req.app.get('socketio');
 
-                const io = req.app.get('socketio');
-                if (io) {
-                    io.emit('seat_unlocked', { showtime_id, seat_id });
+            for (const sId of seatsToUnlock) {
+                const lockKey = `lock:showtime_${showtime_id}:seat_${sId}`;
+                const currentOwner = await redis.get(lockKey);
+                if (currentOwner && currentOwner.toString() === user_id.toString()) {
+                    await redis.del(lockKey);
+                    if (io) {
+                        io.emit('seat_unlocked', { showtime_id, seat_id: sId });
+                    }
                 }
-                return res.status(200).json({ message: "Nhả ghế thành công!" });
             }
 
-            res.status(400).json({ message: "Không thể nhả ghế của người khác hoặc khóa đã hết hạn" });
+            res.status(200).json({ message: "Nhả ghế thành công!" });
         } catch (error) {
             console.error("Lỗi nhả ghế:", error);
             res.status(500).json({ message: "Lỗi máy chủ nội bộ" });
@@ -82,7 +105,7 @@ const ticketController = {
         try {
             const user_id = req.user.id;
             const result = await pool.query(
-                `SELECT t.id, t.total_price, t.payment_method, t.status,
+                `SELECT t.id, t.booking_code, t.total_price, t.payment_method, t.status, t.created_at,
                         s.start_time, s.end_time,
                         m.title as movie_title, m.poster_url, m.duration,
                         r.name as room_name,

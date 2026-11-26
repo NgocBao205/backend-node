@@ -11,12 +11,15 @@ const movieController = {
                 SELECT 
                     m.*, 
                     COALESCE(json_agg(DISTINCT g.name) FILTER (WHERE g.name IS NOT NULL), '[]') as genres,
+                    COALESCE(json_agg(DISTINCT a.name) FILTER (WHERE a.name IS NOT NULL), '[]') as actors,
                     COUNT(DISTINCT r.id) as review_count,
                     COALESCE(ROUND(AVG(r.rating)::numeric, 1), 0.0) as user_rating,
                     EXISTS (SELECT 1 FROM Showtimes st WHERE st.movie_id = m.id) as has_showtimes
                 FROM Movies m
                 LEFT JOIN Movie_Genres mg ON m.id = mg.movie_id
                 LEFT JOIN Genres g ON mg.genre_id = g.id
+                LEFT JOIN Movie_Actors ma ON m.id = ma.movie_id
+                LEFT JOIN Actors a ON ma.actor_id = a.id
                 LEFT JOIN Reviews r ON m.id = r.movie_id
             `;
             const conditions = [];
@@ -29,7 +32,15 @@ const movieController = {
 
             if (search) {
                 values.push(`%${search}%`);
-                conditions.push(`m.title ILIKE $${values.length}`);
+                const paramIdx = values.length;
+                conditions.push(`(
+                    m.title ILIKE $${paramIdx} 
+                    OR EXISTS (
+                        SELECT 1 FROM Movie_Actors sub_ma 
+                        JOIN Actors sub_a ON sub_ma.actor_id = sub_a.id 
+                        WHERE sub_ma.movie_id = m.id AND sub_a.name ILIKE $${paramIdx}
+                    )
+                )`);
             }
 
             if (conditions.length > 0) {
